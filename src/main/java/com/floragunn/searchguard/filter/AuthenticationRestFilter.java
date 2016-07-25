@@ -29,12 +29,12 @@ import com.floragunn.searchguard.auditlog.AuditLog;
 import com.floragunn.searchguard.auth.BackendRegistry;
 import com.floragunn.searchguard.support.HeaderHelper;
 
-public class SearchGuardRestFilter extends RestFilter {
+public class AuthenticationRestFilter extends RestFilter {
 
     private final BackendRegistry registry;
     private final AuditLog auditLog;
 
-    public SearchGuardRestFilter(final BackendRegistry registry, AuditLog auditLog) {
+    public AuthenticationRestFilter(BackendRegistry registry, AuditLog auditLog) {
         super();
         this.registry = registry;
         this.auditLog = auditLog;
@@ -57,12 +57,8 @@ public class SearchGuardRestFilter extends RestFilter {
                 // another roundtrip
                 return;
             }
-            
         }
-        
-        
-        
+
         filterChain.continueProcessing(request, channel);
     }
-
 }

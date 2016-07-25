@@ -17,15 +17,27 @@
 
 package com.floragunn.searchguard.configuration;
 
-import org.elasticsearch.common.inject.AbstractModule;
-
+import com.floragunn.searchguard.auditlog.AuditLog;
 import com.floragunn.searchguard.auth.BackendRegistry;
+import com.floragunn.searchguard.filter.AuthenticationRestFilter;
+import org.elasticsearch.common.inject.AbstractModule;
+import org.elasticsearch.common.inject.Provides;
+import org.elasticsearch.rest.RestController;
 
 public class BackendModule extends AbstractModule {
 
     @Override
     protected void configure() {
         bind(BackendRegistry.class).asEagerSingleton();
+    }
+
+    @Provides
+    public AuthenticationRestFilter authenticationRestFilter(RestController controller,
+                                                             BackendRegistry registry,
+                                                             AuditLog auditLog) {
+        AuthenticationRestFilter filter = new AuthenticationRestFilter(registry, auditLog);
+        controller.registerFilter(filter);
+        return filter;
     }
 
 }
