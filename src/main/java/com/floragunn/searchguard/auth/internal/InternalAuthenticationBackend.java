@@ -20,10 +20,8 @@ package com.floragunn.searchguard.auth.internal;
 import java.util.Arrays;
 
 import org.elasticsearch.ElasticsearchSecurityException;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 
-import com.floragunn.searchguard.action.configupdate.TransportConfigUpdateAction;
 import com.floragunn.searchguard.auth.AuthenticationBackend;
 import com.floragunn.searchguard.configuration.ConfigChangeListener;
 import com.floragunn.searchguard.crypto.BCrypt;
@@ -31,25 +29,22 @@ import com.floragunn.searchguard.user.AuthCredentials;
 import com.floragunn.searchguard.user.User;
 
 public class InternalAuthenticationBackend implements AuthenticationBackend, ConfigChangeListener {
+    public static final String TYPE = "internal";
+    public static final String OLD_TYPE = "intern";
+    public static final String CONFIG_NAME = "internalusers";
 
     private volatile Settings br;
-
-    @Inject
-    public InternalAuthenticationBackend(final Settings unused, final TransportConfigUpdateAction tcua) {
-        super();
-        tcua.addConfigChangeListener("internalusers", this);
-    }
 
     @Override
     public boolean exists(User user) {
         if (!isInitialized()) {
             return false;
         }
-        
+
         String hashed = br.get(user.getName() + ".hash");
 
         if (hashed == null) {
-            
+
             for(String username:br.names()) {
                 String u = br.get(username + ".username");
                 if(user.getName().equals(u)) {
@@ -57,21 +52,21 @@ public class InternalAuthenticationBackend implements AuthenticationBackend, Con
                     break;
                 }
             }
-            
+
             if(hashed == null) {
                 return false;
             }
         }
-        
+
         final String[] roles = br.getAsArray(user.getName() + ".roles", new String[0]);
-        
+
         if(roles != null) {
             user.addRoles(Arrays.asList(roles));
         }
-        
+
         return true;
     }
-    
+
     @Override
     public User authenticate(final AuthCredentials credentials) {
         if (!isInitialized()) {
@@ -81,7 +76,7 @@ public class InternalAuthenticationBackend implements AuthenticationBackend, Con
         String hashed = br.get(credentials.getUsername() + ".hash");
 
         if (hashed == null) {
-            
+
             for(String username:br.names()) {
                 String u = br.get(username + ".username");
                 if(credentials.getUsername().equals(u)) {
@@ -89,18 +84,18 @@ public class InternalAuthenticationBackend implements AuthenticationBackend, Con
                     break;
                 }
             }
-            
+
             if(hashed == null) {
                 throw new ElasticsearchSecurityException(credentials.getUsername() + " not found");
             }
         }
-        
+
         byte[] password = credentials.getPassword();
-        
+
         if(password == null || password.length == 0) {
             throw new ElasticsearchSecurityException("empty passwords not supported");
         }
-        
+
         if (BCrypt.checkpw(password, hashed)) {
             final String[] roles = br.getAsArray(credentials.getUsername() + ".roles", new String[0]);
             return new User(credentials.getUsername(), Arrays.asList(roles));
@@ -111,7 +106,7 @@ public class InternalAuthenticationBackend implements AuthenticationBackend, Con
 
     @Override
     public String getType() {
-        return "internal";
+        return TYPE;
     }
 
     @Override

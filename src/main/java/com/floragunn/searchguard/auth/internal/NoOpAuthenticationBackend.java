@@ -17,24 +17,16 @@
 
 package com.floragunn.searchguard.auth.internal;
 
-import org.elasticsearch.common.settings.Settings;
-
 import com.floragunn.searchguard.auth.AuthenticationBackend;
 import com.floragunn.searchguard.user.AuthCredentials;
 import com.floragunn.searchguard.user.User;
 
 public class NoOpAuthenticationBackend implements AuthenticationBackend {
-
-    private final Settings settings;
-
-    public NoOpAuthenticationBackend(final Settings settings) {
-        super();
-        this.settings = settings;
-    }
+    public static final String TYPE = "noop";
 
     @Override
     public String getType() {
-        return "noop";
+        return TYPE;
     }
 
     @Override

@@ -17,27 +17,96 @@
 
 package com.floragunn.searchguard.configuration;
 
+import com.floragunn.searchguard.action.configupdate.TransportConfigUpdateAction;
 import com.floragunn.searchguard.auditlog.AuditLog;
 import com.floragunn.searchguard.auth.BackendRegistry;
+import com.floragunn.searchguard.auth.internal.InternalAuthenticationBackend;
+import com.floragunn.searchguard.auth.internal.NoOpAuthenticationBackend;
+import com.floragunn.searchguard.authentication.*;
+import com.floragunn.searchguard.authentication.http.HttpAuthenticatorFactory;
+import com.floragunn.searchguard.authentication.http.HttpProxyAuthenticatorFactory;
+import com.floragunn.searchguard.authentication.http.NoConfigurableAuthenticatorFactory;
 import com.floragunn.searchguard.filter.AuthenticationRestFilter;
+import com.floragunn.searchguard.http.HTTPBasicAuthenticator;
+import com.floragunn.searchguard.http.HTTPClientCertAuthenticator;
+import com.floragunn.searchguard.http.HTTPHostAuthenticator;
+import com.floragunn.searchguard.http.HTTPProxyAuthenticator;
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.inject.Provides;
+import org.elasticsearch.common.inject.Singleton;
+import org.elasticsearch.common.inject.multibindings.MapBinder;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.rest.RestController;
+
+import java.util.Map;
 
 public class BackendModule extends AbstractModule {
 
     @Override
     protected void configure() {
         bind(BackendRegistry.class).asEagerSingleton();
+
+        configureAuthenticators();
+        configureAuthenticationBackends();
+    }
+
+    private void configureAuthenticators() {
+        MapBinder<String, HttpAuthenticatorFactory> binder
+                = MapBinder.newMapBinder(binder(), String.class, HttpAuthenticatorFactory.class);
+
+        binder.addBinding(HTTPBasicAuthenticator.TYPE)
+                .toInstance(new NoConfigurableAuthenticatorFactory<>(HTTPBasicAuthenticator.class));
+
+        binder.addBinding(HTTPClientCertAuthenticator.TYPE)
+                .toInstance(new NoConfigurableAuthenticatorFactory<>(HTTPClientCertAuthenticator.class));
+
+        binder.addBinding(HTTPHostAuthenticator.TYPE)
+                .toInstance(new NoConfigurableAuthenticatorFactory<>(HTTPHostAuthenticator.class));
+
+        binder.addBinding(HTTPProxyAuthenticator.TYPE)
+                .to(HttpProxyAuthenticatorFactory.class)
+                .asEagerSingleton();
+    }
+
+    private void configureAuthenticationBackends() {
+        MapBinder<String, AuthenticationBackendFactory> binder =
+                MapBinder.newMapBinder(binder(), String.class, AuthenticationBackendFactory.class);
+
+        binder.addBinding(NoOpAuthenticationBackend.TYPE)
+                .to(NoOpAuthenticationBackendFactory.class)
+                .asEagerSingleton();
+
+        binder.addBinding(InternalAuthenticationBackend.TYPE)
+                .to(InternalAuthenticationBackendFactory.class)
+                .asEagerSingleton();
+
+        binder.addBinding(InternalAuthenticationBackend.OLD_TYPE)
+                .to(InternalAuthenticationBackendFactory.class)
+                .asEagerSingleton();
     }
 
     @Provides
+    @Singleton
     public AuthenticationRestFilter authenticationRestFilter(RestController controller,
                                                              BackendRegistry registry,
                                                              AuditLog auditLog) {
         AuthenticationRestFilter filter = new AuthenticationRestFilter(registry, auditLog);
         controller.registerFilter(filter);
         return filter;
+    }
+
+    @Provides
+    @Singleton
+    public AuthenticationDomainRegistry authenticationDomainRegistry(
+            Settings esSettings,
+            TransportConfigUpdateAction configAction,
+            Map<String, HttpAuthenticatorFactory> typeToAuthenticator,
+            Map<String, AuthenticationBackendFactory> typeToBackend
+    ) {
+        ConfigBaseAuthenticationDomainRegistry registry =
+                new ConfigBaseAuthenticationDomainRegistry(esSettings, configAction, typeToAuthenticator, typeToBackend);
+        configAction.addConfigChangeListener(ConfigBaseAuthenticationDomainRegistry.CONFIG_NAME, registry);
+        return registry;
     }
 
 }

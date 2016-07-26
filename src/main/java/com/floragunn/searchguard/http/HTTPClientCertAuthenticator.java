@@ -29,14 +29,17 @@ import com.floragunn.searchguard.support.ConfigConstants;
 import com.floragunn.searchguard.user.AuthCredentials;
 
 public class HTTPClientCertAuthenticator implements HTTPAuthenticator {
+    public static final String TYPE = "clientcert";
 
-    
     protected final ESLogger log = Loggers.getLogger(this.getClass());
-    private volatile Settings settings;
 
+    public HTTPClientCertAuthenticator() {
+    }
+
+    /**
+     * Backward compatible constructor
+     */
     public HTTPClientCertAuthenticator(final Settings settings) {
-        super();
-        this.settings = settings;
     }
 
     @Override
@@ -59,6 +62,6 @@ public class HTTPClientCertAuthenticator implements HTTPAuthenticator {
 
     @Override
     public String getType() {
-        return "clientcert";
+        return TYPE;
     }
 }

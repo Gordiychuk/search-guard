@@ -30,6 +30,7 @@ import com.floragunn.searchguard.support.ConfigConstants;
 import com.floragunn.searchguard.user.AuthCredentials;
 
 public class HTTPProxyAuthenticator implements HTTPAuthenticator {
+    public static final String TYPE = "proxy";
 
     protected final ESLogger log = Loggers.getLogger(this.getClass());
     private volatile Settings settings;
@@ -74,6 +75,6 @@ public class HTTPProxyAuthenticator implements HTTPAuthenticator {
 
     @Override
     public String getType() {
-        return "proxy";
+        return TYPE;
     }
 }

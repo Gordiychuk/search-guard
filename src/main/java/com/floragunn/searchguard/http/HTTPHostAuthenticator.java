@@ -30,7 +30,14 @@ import com.floragunn.searchguard.user.AuthCredentials;
 import com.floragunn.searchguard.user.User;
 
 public class HTTPHostAuthenticator implements HTTPAuthenticator {
+    public static final String TYPE = "host";
 
+    public HTTPHostAuthenticator() {
+    }
+
+    /**
+     * Backward compatible constructor
+     */
     public HTTPHostAuthenticator(Settings settings) {
         super();
     }
@@ -54,6 +61,6 @@ public class HTTPHostAuthenticator implements HTTPAuthenticator {
 
     @Override
     public String getType() {
-        return "host";
+        return TYPE;
     }
 }

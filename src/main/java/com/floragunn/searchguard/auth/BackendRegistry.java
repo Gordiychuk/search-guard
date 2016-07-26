@@ -21,27 +21,23 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.SortedSet;
-import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 import javax.naming.InvalidNameException;
 import javax.naming.ldap.LdapName;
 
+import com.floragunn.searchguard.authentication.AuthenticationDomainRegistry;
 import org.elasticsearch.ElasticsearchSecurityException;
-import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.rest.BytesRestResponse;
 import org.elasticsearch.rest.RestChannel;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.transport.TransportChannel;
@@ -54,7 +50,6 @@ import com.floragunn.searchguard.auth.internal.NoOpAuthenticationBackend;
 import com.floragunn.searchguard.auth.internal.NoOpAuthorizationBackend;
 import com.floragunn.searchguard.configuration.AdminDNs;
 import com.floragunn.searchguard.configuration.ConfigChangeListener;
-import com.floragunn.searchguard.filter.AuthenticationRestFilter;
 import com.floragunn.searchguard.http.HTTPBasicAuthenticator;
 import com.floragunn.searchguard.http.HTTPClientCertAuthenticator;
 import com.floragunn.searchguard.http.HTTPHostAuthenticator;
@@ -74,16 +69,14 @@ public class BackendRegistry implements ConfigChangeListener {
 
     protected final ESLogger log = Loggers.getLogger(this.getClass());
     private final Map<String, String> authImplMap = new HashMap<String, String>();
-    private final SortedSet<AuthDomain> authDomains = new TreeSet<AuthDomain>();
     private final Set<AuthorizationBackend> authorizers = new HashSet<AuthorizationBackend>();
     private volatile boolean initialized;
     private final TransportConfigUpdateAction tcua;
     private final AdminDNs adminDns;
     private final XFFResolver xffResolver;
-    private volatile boolean anonymousAuthEnabled = false;
     private final Settings esSettings;
-    private final InternalAuthenticationBackend iab;
     private final AuditLog auditLog;
+    private final AuthenticationDomainRegistry authenticationDomainRegistry;
 
     private Cache<AuthCredentials, User> userCache = CacheBuilder.newBuilder()
             .expireAfterWrite(1, TimeUnit.HOURS)
@@ -104,14 +97,20 @@ public class BackendRegistry implements ConfigChangeListener {
             }).build();
 
     @Inject
-    public BackendRegistry(final Settings settings, final TransportConfigUpdateAction tcua, final ClusterService cse,
-            final AdminDNs adminDns, final XFFResolver xffResolver, InternalAuthenticationBackend iab, AuditLog auditLog) {
+    public BackendRegistry(
+            final Settings settings,
+            final TransportConfigUpdateAction tcua,
+            final AdminDNs adminDns,
+            final XFFResolver xffResolver,
+            AuditLog auditLog,
+            AuthenticationDomainRegistry authenticationDomainRegistry
+    ) {
         tcua.addConfigChangeListener("config", this);
         this.tcua = tcua;
         this.adminDns = adminDns;
         this.esSettings = settings;
         this.xffResolver = xffResolver;
-        this.iab = iab;
+        this.authenticationDomainRegistry = authenticationDomainRegistry;
         this.auditLog = auditLog;
         
         authImplMap.put("intern_c", InternalAuthenticationBackend.class.getName());
@@ -141,13 +140,13 @@ public class BackendRegistry implements ConfigChangeListener {
 
     private <T> T newInstance(final String clazzOrShortcut, String type, final Settings settings) throws ClassNotFoundException, NoSuchMethodException,
             SecurityException, InstantiationException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
-        
+
         String clazz = clazzOrShortcut;
-        
+
         if(authImplMap.containsKey(clazz+"_"+type)) {
             clazz = authImplMap.get(clazz+"_"+type);
         }
-        
+
         final Class<T> t = (Class<T>) Class.forName(clazz);
 
         try {
@@ -162,11 +161,8 @@ public class BackendRegistry implements ConfigChangeListener {
 
     @Override
     public void onChange(final String event, final Settings settings) {
-        authDomains.clear();
-        anonymousAuthEnabled = settings.getAsBoolean("searchguard.dynamic.http.anonymous_auth_enabled", false);
-        
         final Map<String, Settings> authzDyn = settings.getGroups("searchguard.dynamic.authz");
-        
+
         for (final String ad : authzDyn.keySet()) {
             final Settings ads = authzDyn.get(ad);
             if (ads.getAsBoolean("enabled", true)) {
@@ -179,42 +175,6 @@ public class BackendRegistry implements ConfigChangeListener {
                     log.error("Unable to initialize AuthorizationBackend {} due to {}", e, ad, e.toString());
                 }
             }
-        }
-        
-        final Map<String, Settings> dyn = settings.getGroups("searchguard.dynamic.authc");
-
-        for (final String ad : dyn.keySet()) {
-            final Settings ads = dyn.get(ad);
-            if (ads.getAsBoolean("enabled", true)) {
-                try {
-                    AuthenticationBackend authenticationBackend;
-                    String authBackendClazz = ads.get("authentication_backend.type", InternalAuthenticationBackend.class.getName());
-                    if(authBackendClazz.equals(InternalAuthenticationBackend.class.getName())
-                            || authBackendClazz.equals("internal")
-                            || authBackendClazz.equals("intern")) {
-                        authenticationBackend = iab;
-                    } else {
-                        authenticationBackend = newInstance(
-                                authBackendClazz,"c",
-                                Settings.builder().put(esSettings).put(ads.getAsSettings("authentication_backend.config")).build());
-                    }
-                    
-                    
-                    HTTPAuthenticator httpAuthenticator = newInstance(
-                            ads.get("http_authenticator.type", "basic"),"h",
-                            Settings.builder().put(esSettings).put(ads.getAsSettings("http_authenticator.config")).build());
-                                        
-                    authDomains.add(new AuthDomain(authenticationBackend, httpAuthenticator,
-                            ads.getAsBoolean("http_authenticator.challenge", true), ads.getAsInt("order", 0)));
-                } catch (final Exception e) {
-                    log.error("Unable to initialize auth domain {} due to {}", e, ad, e.toString());
-                }
-
-            }
-        }
-        
-        if(authDomains.isEmpty()) {
-            authDomains.add(new AuthDomain(iab, new HTTPBasicAuthenticator(Settings.EMPTY), true, 0));
         }
 
         initialized = true;
@@ -237,9 +197,7 @@ public class BackendRegistry implements ConfigChangeListener {
             return true;
         }
           
-        for (final Iterator iterator = new TreeSet<AuthDomain>(authDomains).iterator(); iterator.hasNext();) {
-
-            final AuthDomain authDomain = (AuthDomain) iterator.next();
+        for (final AuthDomain authDomain : authenticationDomainRegistry.getActiveDomains()) {
             User authenticatedUser = null;
             
             if(log.isDebugEnabled()) {
@@ -336,10 +294,7 @@ public class BackendRegistry implements ConfigChangeListener {
         
         HTTPAuthenticator firstChallengingHttpAuthenticator = null;
         
-        for (final Iterator<AuthDomain> iterator = new TreeSet<AuthDomain>(authDomains).iterator(); iterator.hasNext();) {
-
-            final AuthDomain authDomain = iterator.next();
-            
+        for (final AuthDomain authDomain : authenticationDomainRegistry.getActiveDomains()) {
             final HTTPAuthenticator httpAuthenticator = authDomain.getHttpAuthenticator();
             
             if(authDomain.isChallenge() && firstChallengingHttpAuthenticator == null) {
@@ -360,7 +315,7 @@ public class BackendRegistry implements ConfigChangeListener {
             
             if (ac == null) {
                 //no credentials found in request
-                if(anonymousAuthEnabled) {
+                if(authenticationDomainRegistry.isAnonymousEnable()) {
                     continue;
                 }
                         
@@ -384,7 +339,7 @@ public class BackendRegistry implements ConfigChangeListener {
                     //channel.sendResponse(new BytesRestResponse(RestStatus.UNAUTHORIZED));
                     //return false;
                 }
-              
+
             } 
             ////credentials found in request and they are complete
 
@@ -453,7 +408,7 @@ public class BackendRegistry implements ConfigChangeListener {
             //}
             //no reRequest possible
             
-            if(authCredenetials == null && anonymousAuthEnabled) {
+            if(authCredenetials == null && authenticationDomainRegistry.isAnonymousEnable()) {
                 request.putInContext(ConfigConstants.SG_USER, User.ANONYMOUS);
                 if(log.isDebugEnabled()) {
                     log.debug("Anonymous User is authenticated");

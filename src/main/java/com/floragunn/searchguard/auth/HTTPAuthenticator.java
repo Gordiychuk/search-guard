@@ -17,26 +17,31 @@
 
 package com.floragunn.searchguard.auth;
 
+import com.floragunn.searchguard.user.AuthCredentials;
 import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.rest.RestChannel;
 import org.elasticsearch.rest.RestRequest;
 
-import com.floragunn.searchguard.user.AuthCredentials;
-
 public interface HTTPAuthenticator {
 
+    /**
+     * Authenticator type can be use as soft reference reference to authenticator in configuration
+     *
+     * @return not null unique name between whole authenticators
+     */
     String getType();
 
     /**
-     * 
-     * @param request
-     * @param channel
-     * @param authenticationBackend
-     * @param authorizationBackend
+     * @param request not null client request
      * @return The authenticated user, null means another roundtrip
      * @throws ElasticsearchSecurityException
      */
     AuthCredentials extractCredentials(RestRequest request) throws ElasticsearchSecurityException;
-    
+
+    /**
+     * @param channel not null client request
+     * @param credentials nullable creadentials that was extract previously
+     * @return {@code true} if authenticator support repeat authentication, otherwise return {@code false}
+     */
     boolean reRequestAuthentication(final RestChannel channel, AuthCredentials credentials);
 }

@@ -34,13 +34,17 @@ import com.floragunn.searchguard.user.AuthCredentials;
 
 //TODO FUTURE allow only if protocol==https
 public class HTTPBasicAuthenticator implements HTTPAuthenticator {
+    public static final String TYPE = "basic";
 
     protected final ESLogger log = Loggers.getLogger(this.getClass());
-    private final Settings settings;
 
+    public HTTPBasicAuthenticator() {
+    }
+
+    /**
+     * Backward compatible constructor
+     */
     public HTTPBasicAuthenticator(final Settings settings) {
-        super();
-        this.settings = settings;
     }
 
     @Override
@@ -104,6 +108,6 @@ public class HTTPBasicAuthenticator implements HTTPAuthenticator {
 
     @Override
     public String getType() {
-        return "basic";
+        return TYPE;
     }
 }

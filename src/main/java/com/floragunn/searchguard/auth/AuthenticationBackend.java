@@ -22,6 +22,9 @@ import org.elasticsearch.ElasticsearchSecurityException;
 import com.floragunn.searchguard.user.AuthCredentials;
 import com.floragunn.searchguard.user.User;
 
+/**
+ * Backend instance responsible for end authentication by {@link AuthCredentials} that was extracts from request.
+ */
 public interface AuthenticationBackend {
 
     String getType();
