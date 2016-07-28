@@ -1,0 +1,4 @@
+all_access_role:
+  users:
+    - test_user
+    - example_user_with_pass_hashcode_vulnerability

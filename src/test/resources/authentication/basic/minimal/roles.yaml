@@ -1,0 +1,8 @@
+all_access_role:
+  cluster:
+    - 'cluster:*'
+  indices:
+    '*':
+      '*':
+        - ALL
+        - indices:data/read/search
