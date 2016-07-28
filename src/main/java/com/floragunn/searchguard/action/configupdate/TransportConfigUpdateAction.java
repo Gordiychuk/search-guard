@@ -24,6 +24,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
+import com.floragunn.searchguard.configuration.ConfigurationChangeListener;
+import com.floragunn.searchguard.configuration.ConfigurationRepository;
+import com.google.common.collect.*;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthRequest;
 import org.elasticsearch.action.admin.cluster.health.ClusterHealthResponse;
 import org.elasticsearch.action.support.ActionFilters;
@@ -46,34 +49,31 @@ import org.elasticsearch.transport.TransportService;
 import com.floragunn.searchguard.action.configupdate.ConfigUpdateResponse.Node;
 import com.floragunn.searchguard.auth.BackendRegistry;
 import com.floragunn.searchguard.configuration.ConfigChangeListener;
-import com.floragunn.searchguard.configuration.ConfigurationLoader;
-import com.google.common.collect.ArrayListMultimap;
-import com.google.common.collect.ListMultimap;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Multimaps;
 
 public class TransportConfigUpdateAction
 extends
 TransportNodesAction<ConfigUpdateRequest, ConfigUpdateResponse, TransportConfigUpdateAction.NodeConfigUpdateRequest, ConfigUpdateResponse.Node> {
 
     private final ClusterService clusterService;
-    private final ConfigurationLoader cl;
     private final Provider<BackendRegistry> backendRegistry;
     private final ListMultimap<String, ConfigChangeListener> multimap = Multimaps.synchronizedListMultimap(ArrayListMultimap
             .<String, ConfigChangeListener> create());
 
+    private final ConfigurationRepository configurationRepository;
+
     @Inject
     public TransportConfigUpdateAction(final Provider<Client> clientProvider, final Settings settings, final ClusterName clusterName,
             final ThreadPool threadPool, final ClusterService clusterService, final TransportService transportService,
-            final ConfigurationLoader cl, final ActionFilters actionFilters, final IndexNameExpressionResolver indexNameExpressionResolver,
-            Provider<BackendRegistry> backendRegistry) {
+            final ActionFilters actionFilters, final IndexNameExpressionResolver indexNameExpressionResolver,
+            Provider<BackendRegistry> backendRegistry, final ConfigurationRepository configurationRepository) {
         super(settings, ConfigUpdateAction.NAME, clusterName, threadPool, clusterService, transportService, actionFilters,
                 indexNameExpressionResolver, ConfigUpdateRequest.class, TransportConfigUpdateAction.NodeConfigUpdateRequest.class,
                 ThreadPool.Names.MANAGEMENT);
-        this.cl = cl;
         this.clusterService = clusterService;
         this.backendRegistry = backendRegistry;
+        this.configurationRepository = configurationRepository;
 
+        //todo remove it logic, because already exists in ConfigurationRepository
         clusterService.addLifecycleListener(new LifecycleListener() {
 
             @Override
@@ -86,31 +86,27 @@ TransportNodesAction<ConfigUpdateRequest, ConfigUpdateResponse, TransportConfigU
                         Client client = clientProvider.get();
                         logger.debug("Node started, try to initialize it. Wait for yellow cluster state....");
                         ClusterHealthResponse response = client.admin().cluster().health(new ClusterHealthRequest("searchguard").waitForYellowStatus()).actionGet();
-                        
+
                         while(response.isTimedOut() || response.getStatus() == ClusterHealthStatus.RED) {
                             logger.warn("searchguard index not healthy (timeout: {})", response.isTimedOut());
-                            try {
-                                Thread.sleep(3000);
-                            } catch (InterruptedException e) {
-                                //ignore
-                            }
                             response = client.admin().cluster().health(new ClusterHealthRequest("searchguard").waitForYellowStatus()).actionGet();
                             continue;
                         }
-                        
-                        Map<String, Settings> setn = cl.load(new String[] { "config", "roles", "rolesmapping", "internalusers",
-                                "actiongroups" });
-                        
+
+                        List<String> allConfigTypes =
+                                ImmutableList.of("config", "roles", "rolesmapping", "internalusers", "actiongroups");
+
+                        Map<String, Settings> setn = configurationRepository.getConfiguration(allConfigTypes);
+
                         while(!setn.keySet().containsAll(Lists.newArrayList("config", "roles", "rolesmapping"))) {
                             try {
                                 Thread.sleep(1000);
                             } catch (InterruptedException e) {
                                 //ignore
                             }
-                            setn = cl.load(new String[] { "config", "roles", "rolesmapping", "internalusers",
-                            "actiongroups" });
+                            setn = configurationRepository.getConfiguration(allConfigTypes);
                         }
-                        
+
                         synchronized (TransportConfigUpdateAction.this) {
                             logger.debug("Retrieved config on node startup and will now update config change listeners");
                             for (final String evt : setn.keySet()) {
@@ -122,9 +118,9 @@ TransportNodesAction<ConfigUpdateRequest, ConfigUpdateResponse, TransportConfigU
                                     }
                                 }
                             }
-                            
-                            logger.debug("Node '{}' initialized", clusterService.localNode().getName());                            
-                        }                       
+
+                            logger.debug("Node '{}' initialized", clusterService.localNode().getName());
+                        }
                     }
                 });
             }
@@ -160,7 +156,7 @@ TransportNodesAction<ConfigUpdateRequest, ConfigUpdateResponse, TransportConfigU
 
     @Override
     protected ConfigUpdateResponse newResponse(final ConfigUpdateRequest request, final AtomicReferenceArray nodesResponses) {
-        
+
         final List<ConfigUpdateResponse.Node> nodes = Lists.<ConfigUpdateResponse.Node> newArrayList();
         for (int i = 0; i < nodesResponses.length(); i++) {
             final Object resp = nodesResponses.get(i);
@@ -185,8 +181,8 @@ TransportNodesAction<ConfigUpdateRequest, ConfigUpdateResponse, TransportConfigU
     @Override
     protected Node nodeOperation(final NodeConfigUpdateRequest request) {
         backendRegistry.get().invalidateCache();
-        final Map<String, Settings> setn = cl.load(request.request.getConfigTypes());
-        
+        final Map<String, Settings> setn = configurationRepository.reloadConfiguration(Arrays.asList(request.request.getConfigTypes()));
+
         if(setn.size() != request.request.getConfigTypes().length) {
             logger.error("Unable to load all configurations types. Loaded '{}' but should '{}' ", setn.keySet(), Arrays.toString(request.request.getConfigTypes()));
         }
@@ -206,6 +202,10 @@ TransportNodesAction<ConfigUpdateRequest, ConfigUpdateResponse, TransportConfigU
         }
     }
 
+    /**
+     * @deprecated instead use {@link ConfigurationRepository#subscribeOnChange(String, ConfigurationChangeListener)}
+     * this method will be remove in next release
+     */
     public void addConfigChangeListener(final String event, final ConfigChangeListener listener) {
         logger.debug("Add config listener {}",listener.getClass());
         multimap.put(event, listener);

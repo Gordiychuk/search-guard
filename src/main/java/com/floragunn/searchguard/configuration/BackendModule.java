@@ -31,13 +31,18 @@ import com.floragunn.searchguard.http.HTTPBasicAuthenticator;
 import com.floragunn.searchguard.http.HTTPClientCertAuthenticator;
 import com.floragunn.searchguard.http.HTTPHostAuthenticator;
 import com.floragunn.searchguard.http.HTTPProxyAuthenticator;
+import org.elasticsearch.client.Client;
+import org.elasticsearch.cluster.ClusterService;
 import org.elasticsearch.common.inject.AbstractModule;
+import org.elasticsearch.common.inject.Provider;
 import org.elasticsearch.common.inject.Provides;
 import org.elasticsearch.common.inject.Singleton;
 import org.elasticsearch.common.inject.multibindings.MapBinder;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.rest.RestController;
+import org.elasticsearch.threadpool.ThreadPool;
 
+import javax.annotation.Nonnull;
 import java.util.Map;
 
 public class BackendModule extends AbstractModule {
@@ -100,13 +105,23 @@ public class BackendModule extends AbstractModule {
     public AuthenticationDomainRegistry authenticationDomainRegistry(
             Settings esSettings,
             TransportConfigUpdateAction configAction,
+            ConfigurationRepository configurationRepository,
             Map<String, HttpAuthenticatorFactory> typeToAuthenticator,
             Map<String, AuthenticationBackendFactory> typeToBackend
     ) {
         ConfigBaseAuthenticationDomainRegistry registry =
                 new ConfigBaseAuthenticationDomainRegistry(esSettings, configAction, typeToAuthenticator, typeToBackend);
-        configAction.addConfigChangeListener(ConfigBaseAuthenticationDomainRegistry.CONFIG_NAME, registry);
+        configurationRepository.subscribeOnChange(ConfigBaseAuthenticationDomainRegistry.CONFIG_NAME, registry);
         return registry;
     }
 
+    @Provides
+    @Singleton
+    public ConfigurationRepository configurationRepository(
+            @Nonnull ThreadPool threadPool,
+            @Nonnull Provider<Client> clientProvider,
+            @Nonnull ClusterService clusterService
+    ) {
+        return IndexBaseConfigurationRepository.create(threadPool, clientProvider, clusterService);
+    }
 }

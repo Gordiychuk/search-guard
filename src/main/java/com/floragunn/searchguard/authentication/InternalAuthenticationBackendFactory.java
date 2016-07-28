@@ -1,24 +1,21 @@
 package com.floragunn.searchguard.authentication;
 
 
-import com.floragunn.searchguard.action.configupdate.TransportConfigUpdateAction;
 import com.floragunn.searchguard.auth.internal.InternalAuthenticationBackend;
+import com.floragunn.searchguard.configuration.ConfigurationRepository;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 
 public class InternalAuthenticationBackendFactory implements AuthenticationBackendFactory<InternalAuthenticationBackend> {
-    private final TransportConfigUpdateAction transportConfig;
+    private final ConfigurationRepository configurationRepository;
 
     @Inject
-    public InternalAuthenticationBackendFactory(TransportConfigUpdateAction transportConfig) {
-        this.transportConfig = transportConfig;
+    public InternalAuthenticationBackendFactory(ConfigurationRepository configurationRepository) {
+        this.configurationRepository = configurationRepository;
     }
 
     @Override
     public InternalAuthenticationBackend create(Settings settings) {
-        InternalAuthenticationBackend backend = new InternalAuthenticationBackend();
-        //todo get actual config instead?
-        transportConfig.addConfigChangeListener(InternalAuthenticationBackend.CONFIG_NAME, backend);
-        return backend;
+        return new InternalAuthenticationBackend(configurationRepository);
     }
 }

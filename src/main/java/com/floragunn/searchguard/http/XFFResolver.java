@@ -19,6 +19,8 @@ package com.floragunn.searchguard.http;
 
 import java.net.InetSocketAddress;
 
+import com.floragunn.searchguard.configuration.ConfigurationChangeListener;
+import com.floragunn.searchguard.configuration.ConfigurationRepository;
 import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.logging.ESLogger;
@@ -29,21 +31,21 @@ import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.http.netty.NettyHttpRequest;
 import org.elasticsearch.rest.RestRequest;
 
-import com.floragunn.searchguard.action.configupdate.TransportConfigUpdateAction;
-import com.floragunn.searchguard.configuration.ConfigChangeListener;
 import com.floragunn.searchguard.support.ConfigConstants;
 
-public class XFFResolver implements ConfigChangeListener {
+import javax.annotation.Nonnull;
+
+public class XFFResolver implements ConfigurationChangeListener {
 
     protected final ESLogger log = Loggers.getLogger(this.getClass());
-    private volatile Settings settings;
-    private volatile boolean enabled;
+    private volatile boolean enabled = false;
     private volatile RemoteIpDetector detector;
     
     @Inject
-    public XFFResolver(final TransportConfigUpdateAction tcua) {
+    public XFFResolver(final ConfigurationRepository configurationRepository) {
         super();
-        tcua.addConfigChangeListener("config", this);
+        //todo replace on safe subscribe
+        configurationRepository.subscribeOnChange("config", this);
     }
 
     public TransportAddress resolve(final RestRequest request) throws ElasticsearchSecurityException {
@@ -52,7 +54,7 @@ public class XFFResolver implements ConfigChangeListener {
             log.trace("resolve {}", request.getRemoteAddress());
         }
         
-        if(isInitialized() && enabled && request.getRemoteAddress() instanceof InetSocketAddress && request instanceof NettyHttpRequest) {
+        if(enabled && request.getRemoteAddress() instanceof InetSocketAddress && request instanceof NettyHttpRequest) {
             
             InetSocketAddress isa = new InetSocketAddress(detector.detect((NettyHttpRequest) request), ((InetSocketAddress)request.getRemoteAddress()).getPort());
         
@@ -72,7 +74,7 @@ public class XFFResolver implements ConfigChangeListener {
         } else if(request.getRemoteAddress() instanceof InetSocketAddress){
             
             if(log.isTraceEnabled()) {
-                log.trace("no xff done (not initialized, enabled or no netty request) {},{},{},{}",isInitialized(), enabled, request.getClass());
+                log.trace("no xff done (not initialized, enabled or no netty request) {},{},{}", enabled, request.getClass());
 
             }
             return new InetSocketTransportAddress((InetSocketAddress)request.getRemoteAddress());
@@ -82,8 +84,7 @@ public class XFFResolver implements ConfigChangeListener {
     }
 
     @Override
-    public void onChange(String event, Settings settings) {
-        this.settings = settings;
+    public void onChange(@Nonnull Settings settings) {
         enabled = settings.getAsBoolean("searchguard.dynamic.http.xff.enabled", true);
         if(enabled) {
             detector = new RemoteIpDetector();
@@ -96,16 +97,6 @@ public class XFFResolver implements ConfigChangeListener {
             detector = null;
         }
         
-    }
-
-    @Override
-    public void validate(String event, Settings settings) throws ElasticsearchSecurityException {
-        
-    }
-
-    @Override
-    public boolean isInitialized() {
-        return this.settings != null;
     }
 }
 

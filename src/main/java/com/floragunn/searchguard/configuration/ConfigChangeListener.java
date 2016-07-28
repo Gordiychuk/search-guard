@@ -20,6 +20,10 @@ package com.floragunn.searchguard.configuration;
 import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.common.settings.Settings;
 
+/**
+ * @deprecated use {@link ConfigurationChangeListener} with subscribe on changes via {@link ConfigurationRepository}
+ */
+@Deprecated
 public interface ConfigChangeListener {
 
     public void onChange(String event, Settings settings);

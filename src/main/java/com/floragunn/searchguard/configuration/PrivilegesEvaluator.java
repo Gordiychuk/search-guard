@@ -64,6 +64,8 @@ import com.google.common.collect.Sets;
 import com.google.common.collect.Sets.SetView;
 
 public class PrivilegesEvaluator implements ConfigChangeListener {
+    private static final String ROLES_CONFIGURATION = "roles";
+    private static final String ROLES_MAPPING_CONFIGURATION = "rolesmapping";
 
     private static final Set<String> NULL_SET = Sets.newHashSet((String)null);
     private final Set<String> DLSFLS = ImmutableSet.of("_dls_", "_fls_");
@@ -77,13 +79,12 @@ public class PrivilegesEvaluator implements ConfigChangeListener {
     private final Map<Class, Method> typesCache = Collections.synchronizedMap(new HashMap(100));
     private final String[] deniedActionPatterns;
     private final AuditLog auditLog;
+    private final ConfigurationRepository configurationRepository;
 
     @Inject
-    public PrivilegesEvaluator(final ClusterService clusterService, final TransportConfigUpdateAction tcua, final ActionGroupHolder ah,
+    public PrivilegesEvaluator(final ClusterService clusterService, final ConfigurationRepository configurationRepository, final ActionGroupHolder ah,
             final IndexNameExpressionResolver resolver, AuditLog auditLog) {
-        super();
-        tcua.addConfigChangeListener("rolesmapping", this);
-        tcua.addConfigChangeListener("roles", this);
+        this.configurationRepository = configurationRepository;
         this.clusterService = clusterService;
         this.ah = ah;
         this.resolver = resolver;
@@ -133,23 +134,36 @@ public class PrivilegesEvaluator implements ConfigChangeListener {
     }
 
     @Override
+    @Deprecated
     public void onChange(final String event, final Settings settings) {
-        switch (event) {
-        case "roles":
-            roles = settings;
-            break;
-        case "rolesmapping":
-            rolesMapping = settings;
-            break;
+    }
+
+    @Override
+    @Deprecated
+    public boolean isInitialized() {
+        //todo more friendly rewrite
+        loadRoles();
+        loadRolesMapping();
+
+        return rolesMapping != null && roles != null;
+    }
+
+    private void loadRoles() {
+        Settings loadedRoles = configurationRepository.getConfiguration(ROLES_CONFIGURATION);
+        if(loadedRoles != null) {
+            roles = loadedRoles;
+        }
+    }
+
+    private void loadRolesMapping() {
+        Settings loadedMapping = configurationRepository.getConfiguration(ROLES_MAPPING_CONFIGURATION);
+        if(loadedMapping != null) {
+            rolesMapping = loadedMapping;
         }
     }
 
     @Override
-    public boolean isInitialized() {
-        return rolesMapping != null && roles != null;
-    }
-
-    @Override
+    @Deprecated
     public void validate(final String event, final Settings settings) throws ElasticsearchSecurityException {
         // TODO Auto-generated method stub
 

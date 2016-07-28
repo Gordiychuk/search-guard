@@ -7,22 +7,22 @@ import com.floragunn.searchguard.auth.AuthenticationBackend;
 import com.floragunn.searchguard.auth.HTTPAuthenticator;
 import com.floragunn.searchguard.auth.internal.InternalAuthenticationBackend;
 import com.floragunn.searchguard.authentication.http.HttpAuthenticatorFactory;
-import com.floragunn.searchguard.configuration.ConfigChangeListener;
+import com.floragunn.searchguard.configuration.ConfigurationChangeListener;
 import com.floragunn.searchguard.http.HTTPBasicAuthenticator;
 import com.google.common.collect.ImmutableSortedSet;
-import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 
+import javax.annotation.Nonnull;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Map;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
-public class ConfigBaseAuthenticationDomainRegistry implements AuthenticationDomainRegistry, ConfigChangeListener {
+public class ConfigBaseAuthenticationDomainRegistry implements AuthenticationDomainRegistry, ConfigurationChangeListener {
     public static final String CONFIG_NAME = "config";
     private static final ESLogger LOGGER = Loggers.getLogger(ConfigBaseAuthenticationDomainRegistry.class);
 
@@ -31,7 +31,6 @@ public class ConfigBaseAuthenticationDomainRegistry implements AuthenticationDom
     private final Map<String, HttpAuthenticatorFactory> typeToAuthenticator;
     private final Map<String, AuthenticationBackendFactory> typeToBackend;
 
-    private volatile boolean initialized;
     private volatile boolean anonymousAuthEnabled = false;
     private volatile SortedSet<AuthDomain> activeDomains = ImmutableSortedSet.of();
 
@@ -66,7 +65,7 @@ public class ConfigBaseAuthenticationDomainRegistry implements AuthenticationDom
     }
 
     @Override
-    public void onChange(final String event, final Settings settings) {
+    public void onChange(@Nonnull Settings settings) {
         if(LOGGER.isDebugEnabled()) {
             //todo print node name or use MDC
             LOGGER.debug("Was changed authentication domain, new configuration:\n{}", settings.toDelimitedString('\n'));
@@ -109,7 +108,6 @@ public class ConfigBaseAuthenticationDomainRegistry implements AuthenticationDom
         }
 
         activeDomains = ImmutableSortedSet.copyOfSorted(domains);
-        initialized = true;
     }
 
     private AuthDomain defaultDomain() {
@@ -192,14 +190,5 @@ public class ConfigBaseAuthenticationDomainRegistry implements AuthenticationDom
             final Constructor<T> tctor = t.getConstructor(Settings.class, TransportConfigUpdateAction.class);
             return tctor.newInstance(settings, configAction);
         }
-    }
-
-    @Override
-    public void validate(String event, Settings settings) throws ElasticsearchSecurityException {
-    }
-
-    @Override
-    public boolean isInitialized() {
-        return initialized;
     }
 }
