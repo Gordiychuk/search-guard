@@ -1,0 +1,8 @@
+test_user:
+  hash: $2a$12$GI9JXffO3WUjTsU7Yy3E4.LBxC2ILo66Zg/rr79BpikSL2IIRezQa
+  #password is: spock
+example_user_with_pass_hashcode_vulnerability:
+  hash: $2a$12$.uNF37MWsV7DhnQvfAo3cuxo9nsNlyJPkN49C9Tuvjj7TUTh4OoR.
+  #password is: Wikohy8b
+  #hashcode collision passwords is: aaaqscnch or adgxzhwf or aaab6ggdln or aaaaainxfhg
+
