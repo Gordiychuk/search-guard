@@ -50,7 +50,6 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.TransportAddress;
 import org.elasticsearch.transport.TransportRequest;
 
-import com.floragunn.searchguard.action.configupdate.TransportConfigUpdateAction;
 import com.floragunn.searchguard.auditlog.AuditLog;
 import com.floragunn.searchguard.support.Base64Helper;
 import com.floragunn.searchguard.support.ConfigConstants;
@@ -63,27 +62,28 @@ import com.google.common.collect.Multimaps;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Sets.SetView;
 
-public class PrivilegesEvaluator implements ConfigChangeListener {
+import javax.annotation.Nullable;
+
+public class PrivilegesEvaluator {
+    private static final String ROLES_CONFIGURATION = "roles";
+    private static final String ROLES_MAPPING_CONFIGURATION = "rolesmapping";
 
     private static final Set<String> NULL_SET = Sets.newHashSet((String)null);
     private final Set<String> DLSFLS = ImmutableSet.of("_dls_", "_fls_");
     protected final ESLogger log = Loggers.getLogger(this.getClass());
     private final ClusterService clusterService;
-    private volatile Settings rolesMapping;
-    private volatile Settings roles;
     private final ActionGroupHolder ah;
     private final IndexNameExpressionResolver resolver;
     private final Map<Class, Method> typeCache = Collections.synchronizedMap(new HashMap(100));
     private final Map<Class, Method> typesCache = Collections.synchronizedMap(new HashMap(100));
     private final String[] deniedActionPatterns;
     private final AuditLog auditLog;
+    private final ConfigurationRepository configurationRepository;
 
     @Inject
-    public PrivilegesEvaluator(final ClusterService clusterService, final TransportConfigUpdateAction tcua, final ActionGroupHolder ah,
+    public PrivilegesEvaluator(final ClusterService clusterService, final ConfigurationRepository configurationRepository, final ActionGroupHolder ah,
             final IndexNameExpressionResolver resolver, AuditLog auditLog) {
-        super();
-        tcua.addConfigChangeListener("rolesmapping", this);
-        tcua.addConfigChangeListener("roles", this);
+        this.configurationRepository = configurationRepository;
         this.clusterService = clusterService;
         this.ah = ah;
         this.resolver = resolver;
@@ -132,30 +132,26 @@ public class PrivilegesEvaluator implements ConfigChangeListener {
         
     }
 
-    @Override
-    public void onChange(final String event, final Settings settings) {
-        switch (event) {
-        case "roles":
-            roles = settings;
-            break;
-        case "rolesmapping":
-            rolesMapping = settings;
-            break;
-        }
-    }
-
-    @Override
     public boolean isInitialized() {
-        return rolesMapping != null && roles != null;
+        return getRolesSettings() != null && getRolesMappingSettings() != null;
     }
 
-    @Override
-    public void validate(final String event, final Settings settings) throws ElasticsearchSecurityException {
-        // TODO Auto-generated method stub
+    @Nullable
+    private Settings getRolesSettings() {
+        return configurationRepository.getConfiguration(ROLES_CONFIGURATION);
+    }
 
+    @Nullable
+    private Settings getRolesMappingSettings() {
+        return configurationRepository.getConfiguration(ROLES_MAPPING_CONFIGURATION);
     }
 
     public boolean evaluate(final User user, final String action, final ActionRequest request) {
+
+        final Settings roles = getRolesSettings();
+        if (roles == null) {
+            throw new ElasticsearchSecurityException("Authorization roles not configured. May be Search Guard is not initialized.");
+        }
         
         if(action.startsWith("cluster:admin/snapshot/restore")) {
             auditLog.logMissingPrivileges(action, request);
@@ -393,6 +389,11 @@ public class PrivilegesEvaluator implements ConfigChangeListener {
         
         if(user == null) {
             return Collections.EMPTY_SET;
+        }
+
+        Settings rolesMapping = getRolesMappingSettings();
+        if (rolesMapping == null) {
+            throw new ElasticsearchSecurityException("Authorization mapping between roles and backend roles not configured. May be Search Guard is not initialized.");
         }
         
         final Set<String> sgRoles = new TreeSet<String>();

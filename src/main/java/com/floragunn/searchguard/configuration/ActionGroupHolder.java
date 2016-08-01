@@ -21,57 +21,47 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
-import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 
-import com.floragunn.searchguard.action.configupdate.TransportConfigUpdateAction;
 
-public class ActionGroupHolder implements ConfigChangeListener {
+import javax.annotation.Nonnull;
 
-    private volatile Settings actionGroups;
+public class ActionGroupHolder {
+    private static final String CONFIGURATION_TYPE = "actiongroups";
+
+    private final ConfigurationRepository configurationRepository;
 
     @Inject
-    public ActionGroupHolder(final TransportConfigUpdateAction tcua) {
-        tcua.addConfigChangeListener("actiongroups", this);
-    }
-
-    @Override
-    public void onChange(final String event, final Settings settings) {
-        actionGroups = settings;
-    }
-
-    @Override
-    public void validate(final String event, final Settings settings) throws ElasticsearchSecurityException {
-
-    }
-
-    @Override
-    public boolean isInitialized() {
-        return actionGroups != null;
+    public ActionGroupHolder(@Nonnull ConfigurationRepository configurationRepository) {
+        this.configurationRepository = configurationRepository;
     }
 
     public Set<String> getGroupMembers(final String groupname) {
-
-        if (!isInitialized()) {
+        Settings settings = getSettings();
+        if (settings == null) {
             return Collections.emptySet();
         }
 
-        return resolve(groupname);
+        return resolve(settings, groupname);
     }
 
-    private Set<String> resolve(final String entry) {
+    private Set<String> resolve(@Nonnull Settings actionGroups, final String entry) {
 
         final Set<String> ret = new HashSet<String>();
         final String[] en = actionGroups.getAsArray(entry);
         for (int i = 0; i < en.length; i++) {
             final String string = en[i];
             if (actionGroups.names().contains(string)) {
-                ret.addAll(resolve(string));
+                ret.addAll(resolve(actionGroups, string));
             } else {
                 ret.add(string);
             }
         }
         return ret;
+    }
+
+    private Settings getSettings() {
+        return configurationRepository.getConfiguration(CONFIGURATION_TYPE);
     }
 }

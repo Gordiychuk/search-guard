@@ -30,18 +30,17 @@ import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
+import javax.annotation.Nonnull;
 import javax.naming.InvalidNameException;
 import javax.naming.ldap.LdapName;
 
+import com.floragunn.searchguard.configuration.ConfigurationChangeListener;
 import org.elasticsearch.ElasticsearchSecurityException;
-import org.elasticsearch.cluster.ClusterService;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.rest.BytesRestResponse;
 import org.elasticsearch.rest.RestChannel;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.transport.TransportChannel;
@@ -53,8 +52,6 @@ import com.floragunn.searchguard.auth.internal.InternalAuthenticationBackend;
 import com.floragunn.searchguard.auth.internal.NoOpAuthenticationBackend;
 import com.floragunn.searchguard.auth.internal.NoOpAuthorizationBackend;
 import com.floragunn.searchguard.configuration.AdminDNs;
-import com.floragunn.searchguard.configuration.ConfigChangeListener;
-import com.floragunn.searchguard.filter.SearchGuardRestFilter;
 import com.floragunn.searchguard.http.HTTPBasicAuthenticator;
 import com.floragunn.searchguard.http.HTTPClientCertAuthenticator;
 import com.floragunn.searchguard.http.HTTPHostAuthenticator;
@@ -70,7 +67,8 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 
-public class BackendRegistry implements ConfigChangeListener {
+public class BackendRegistry implements ConfigurationChangeListener {
+    public static final String CONFIGURATION_NAME = "config";
 
     protected final ESLogger log = Loggers.getLogger(this.getClass());
     private final Map<String, String> authImplMap = new HashMap<String, String>();
@@ -103,11 +101,9 @@ public class BackendRegistry implements ConfigChangeListener {
                 }
             }).build();
 
-    @Inject
-    public BackendRegistry(final Settings settings, final RestController controller, final TransportConfigUpdateAction tcua, final ClusterService cse,
-            final AdminDNs adminDns, final XFFResolver xffResolver, InternalAuthenticationBackend iab, AuditLog auditLog) {
-        tcua.addConfigChangeListener("config", this);
-        controller.registerFilter(new SearchGuardRestFilter(this, auditLog));
+    public BackendRegistry(final Settings settings, final TransportConfigUpdateAction tcua,
+                           final AdminDNs adminDns, final XFFResolver xffResolver, InternalAuthenticationBackend iab, AuditLog auditLog
+    ) {
         this.tcua = tcua;
         this.adminDns = adminDns;
         this.esSettings = settings;
@@ -162,7 +158,7 @@ public class BackendRegistry implements ConfigChangeListener {
     }
 
     @Override
-    public void onChange(final String event, final Settings settings) {
+    public void onChange(@Nonnull final Settings settings) {
         authDomains.clear();
         anonymousAuthEnabled = settings.getAsBoolean("searchguard.dynamic.http.anonymous_auth_enabled", false);
         
@@ -218,11 +214,6 @@ public class BackendRegistry implements ConfigChangeListener {
         }
 
         initialized = true;
-    }
-
-    @Override
-    public void validate(final String event, final Settings settings) throws ElasticsearchSecurityException {
-
     }
 
     public boolean authenticate(final TransportRequest request) throws ElasticsearchSecurityException {
@@ -482,8 +473,7 @@ public class BackendRegistry implements ConfigChangeListener {
         return authenticated;
     }
 
-    @Override
-    public boolean isInitialized() {
+    private boolean isInitialized() {
         return initialized;
     }
 
@@ -526,5 +516,4 @@ public class BackendRegistry implements ConfigChangeListener {
 
         tr.putInContext(ConfigConstants.SG_USER, Objects.requireNonNull((User) aU));
     }
-
 }

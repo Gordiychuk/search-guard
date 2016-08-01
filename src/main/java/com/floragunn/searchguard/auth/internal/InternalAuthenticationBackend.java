@@ -19,90 +19,103 @@ package com.floragunn.searchguard.auth.internal;
 
 import java.util.Arrays;
 
+import com.floragunn.searchguard.configuration.ConfigurationRepository;
 import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.logging.ESLogger;
+import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 
-import com.floragunn.searchguard.action.configupdate.TransportConfigUpdateAction;
 import com.floragunn.searchguard.auth.AuthenticationBackend;
-import com.floragunn.searchguard.configuration.ConfigChangeListener;
 import com.floragunn.searchguard.crypto.BCrypt;
 import com.floragunn.searchguard.user.AuthCredentials;
 import com.floragunn.searchguard.user.User;
 
-public class InternalAuthenticationBackend implements AuthenticationBackend, ConfigChangeListener {
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
-    private volatile Settings br;
+
+public class InternalAuthenticationBackend implements AuthenticationBackend {
+    private static final ESLogger LOGGER = Loggers.getLogger(InternalAuthenticationBackend.class);
+
+    private static final String CONFIG_NAME = "internalusers";
+
+    public static final String TYPE = "internal";
+    public static final String OLD_TYPE = "intern";
+
+    @Nonnull
+    private final ConfigurationRepository configurationRepository;
 
     @Inject
-    public InternalAuthenticationBackend(final Settings unused, final TransportConfigUpdateAction tcua) {
-        super();
-        tcua.addConfigChangeListener("internalusers", this);
+    public InternalAuthenticationBackend(@Nonnull ConfigurationRepository configurationRepository) {
+        this.configurationRepository = configurationRepository;
     }
 
     @Override
     public boolean exists(User user) {
-        if (!isInitialized()) {
+        Settings cfg = getSettings();
+        if (cfg == null) {
             return false;
         }
-        
-        String hashed = br.get(user.getName() + ".hash");
+
+        String hashed = cfg.get(user.getName() + ".hash");
 
         if (hashed == null) {
-            
-            for(String username:br.names()) {
-                String u = br.get(username + ".username");
+
+            for(String username:cfg.names()) {
+                String u = cfg.get(username + ".username");
                 if(user.getName().equals(u)) {
-                    hashed = br.get(username+ ".hash");
+                    hashed = cfg.get(username+ ".hash");
                     break;
                 }
             }
-            
+
             if(hashed == null) {
                 return false;
             }
         }
-        
-        final String[] roles = br.getAsArray(user.getName() + ".roles", new String[0]);
-        
+
+        final String[] roles = cfg.getAsArray(user.getName() + ".roles", new String[0]);
+
         if(roles != null) {
             user.addRoles(Arrays.asList(roles));
         }
-        
+
         return true;
     }
-    
+
     @Override
     public User authenticate(final AuthCredentials credentials) {
-        if (!isInitialized()) {
+        Settings cfg = getSettings();
+        if (cfg == null) {
             throw new ElasticsearchSecurityException("Internal authentication backend not configured. May be Search Guard is not initialized.");
         }
 
-        String hashed = br.get(credentials.getUsername() + ".hash");
+        String hashed = cfg.get(credentials.getUsername() + ".hash");
 
         if (hashed == null) {
-            
-            for(String username:br.names()) {
-                String u = br.get(username + ".username");
+
+            for(String username: cfg.names()) {
+                String u = cfg.get(username + ".username");
                 if(credentials.getUsername().equals(u)) {
-                    hashed = br.get(username+ ".hash");
+                    hashed = cfg.get(username+ ".hash");
                     break;
                 }
             }
-            
+
             if(hashed == null) {
                 throw new ElasticsearchSecurityException(credentials.getUsername() + " not found");
             }
         }
-        
+
         byte[] password = credentials.getPassword();
-        
+
         if(password == null || password.length == 0) {
             throw new ElasticsearchSecurityException("empty passwords not supported");
         }
-        
+
         if (BCrypt.checkpw(password, hashed)) {
-            final String[] roles = br.getAsArray(credentials.getUsername() + ".roles", new String[0]);
+            final String[] roles = cfg.getAsArray(credentials.getUsername() + ".roles", new String[0]);
             return new User(credentials.getUsername(), Arrays.asList(roles));
         } else {
             throw new ElasticsearchSecurityException("password does not match");
@@ -111,22 +124,11 @@ public class InternalAuthenticationBackend implements AuthenticationBackend, Con
 
     @Override
     public String getType() {
-        return "internal";
+        return TYPE;
     }
 
-    @Override
-    public void onChange(final String event, final Settings settings) {
-        br = settings;
-    }
-
-    @Override
-    public void validate(final String event, final Settings settings) throws ElasticsearchSecurityException {
-        // TODO Auto-generated method stub
-
-    }
-
-    @Override
-    public boolean isInitialized() {
-        return br != null;
+    @Nullable
+    public Settings getSettings() {
+        return configurationRepository.getConfiguration(CONFIG_NAME);
     }
 }
