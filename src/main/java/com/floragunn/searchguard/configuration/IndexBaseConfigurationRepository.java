@@ -286,11 +286,6 @@ public class IndexBaseConfigurationRepository implements ConfigurationRepository
                 LOGGER.debug("SearchGuard configuration with type {} not exists", getResponse.getType());
             }
 
-            if(getResponse.isSourceEmpty()) {
-
-            }
-
-
             Settings settings;
 
             if (getResponse.isSourceEmpty() || getResponse.getSourceAsBytesRef().length() == 0) {

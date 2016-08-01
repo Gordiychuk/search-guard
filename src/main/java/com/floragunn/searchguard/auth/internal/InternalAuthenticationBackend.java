@@ -22,8 +22,6 @@ import java.util.Arrays;
 import com.floragunn.searchguard.configuration.ConfigurationRepository;
 import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.logging.ESLogger;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 
 import com.floragunn.searchguard.auth.AuthenticationBackend;
@@ -36,12 +34,9 @@ import javax.annotation.Nullable;
 
 
 public class InternalAuthenticationBackend implements AuthenticationBackend {
-    private static final ESLogger LOGGER = Loggers.getLogger(InternalAuthenticationBackend.class);
-
     private static final String CONFIG_NAME = "internalusers";
 
     public static final String TYPE = "internal";
-    public static final String OLD_TYPE = "intern";
 
     @Nonnull
     private final ConfigurationRepository configurationRepository;

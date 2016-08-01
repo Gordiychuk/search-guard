@@ -20,9 +20,7 @@ package com.floragunn.searchguard.http;
 import java.net.InetSocketAddress;
 
 import com.floragunn.searchguard.configuration.ConfigurationChangeListener;
-import com.floragunn.searchguard.configuration.ConfigurationRepository;
 import org.elasticsearch.ElasticsearchSecurityException;
-import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
@@ -41,10 +39,6 @@ public class XFFResolver implements ConfigurationChangeListener {
     protected final ESLogger log = Loggers.getLogger(this.getClass());
     private volatile boolean enabled = false;
     private volatile RemoteIpDetector detector;
-    
-    public XFFResolver() {
-        super();
-    }
 
     public TransportAddress resolve(final RestRequest request) throws ElasticsearchSecurityException {
         
