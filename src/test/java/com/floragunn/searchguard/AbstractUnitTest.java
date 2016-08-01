@@ -172,7 +172,7 @@ public abstract class AbstractUnitTest {
     }
     // @formatter:on
 
-    protected static final ESLogger log = Loggers.getLogger(AbstractUnitTest.class);
+    protected final ESLogger log = Loggers.getLogger(AbstractUnitTest.class);
 
     protected final String getHttpServerUri() {
         final String address = "http" + (enableHTTPClientSSL ? "s" : "") + "://" + httpHost + ":" + httpPort;

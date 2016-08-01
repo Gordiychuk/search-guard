@@ -20,7 +20,7 @@ package com.floragunn.searchguard.configuration;
 import com.floragunn.searchguard.action.configupdate.TransportConfigUpdateAction;
 import com.floragunn.searchguard.auditlog.AuditLog;
 import com.floragunn.searchguard.auth.internal.InternalAuthenticationBackend;
-import com.floragunn.searchguard.filter.SearchGuardRestFilter;
+import com.floragunn.searchguard.filter.AuthenticationRestFilter;
 import com.floragunn.searchguard.http.XFFResolver;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.ClusterService;
@@ -76,7 +76,7 @@ public class BackendModule extends AbstractModule {
         BackendRegistry backendRegistry = new BackendRegistry(settings, tcua, adminDns, xffResolver, iab, auditLog);
 
         configurationRepository.subscribeOnChange(BackendRegistry.CONFIGURATION_NAME, backendRegistry);
-        controller.registerFilter(new SearchGuardRestFilter(backendRegistry, auditLog));
+        controller.registerFilter(new AuthenticationRestFilter(backendRegistry, auditLog));
         return backendRegistry;
     }
 }

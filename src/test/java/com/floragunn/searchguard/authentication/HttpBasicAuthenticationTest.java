@@ -3,7 +3,6 @@ package com.floragunn.searchguard.authentication;
 import com.floragunn.searchguard.SearchGuardPlugin;
 import com.floragunn.searchguard.action.configupdate.ConfigUpdateAction;
 import com.floragunn.searchguard.action.configupdate.ConfigUpdateRequest;
-import com.floragunn.searchguard.action.configupdate.ConfigUpdateResponse;
 import com.floragunn.searchguard.configuration.IndexBaseConfigurationRepository;
 import com.floragunn.searchguard.ssl.SearchGuardSSLPlugin;
 import com.floragunn.searchguard.ssl.util.SSLConfigConstants;
@@ -13,13 +12,21 @@ import com.floragunn.searchguard.utils.ResourceUtils;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import org.apache.http.HttpStatus;
+import org.apache.http.client.CookieStore;
+import org.apache.http.client.config.CookieSpecs;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.fluent.Executor;
 import org.apache.http.client.fluent.Request;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.impl.client.BasicCookieStore;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 import org.apache.http.message.BasicHeader;
 import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.transport.TransportClient;
-import org.elasticsearch.common.logging.ESLogger;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.common.transport.TransportAddress;
@@ -38,8 +45,6 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.junit.Assume.assumeThat;
 
 public class HttpBasicAuthenticationTest {
-    private static final ESLogger LOGGER = Loggers.getLogger(HttpBasicAuthenticationTest.class);
-
     private static final int COUNT_NODE = 1;
     private final static ResourceUtils RESOURCES = new ResourceUtils(HttpBasicAuthenticationTest.class);
     private static EmbeddedServer server;
@@ -150,13 +155,10 @@ public class HttpBasicAuthenticationTest {
     public void passwordHashCodeVulnerability() throws Exception {
         loadConfiguration("authentication/basic/minimal");
 
-        String correctBasic = Base64Helper.encodeBasicHeader("example_user_with_pass_hashcode_vulnerability", "Wikohy8b");
-        String hackerBasic = Base64Helper.encodeBasicHeader("example_user_with_pass_hashcode_vulnerability", "aaaqscnch");
-
         int statusCode =
-                Request.Get(httpDomain + "/_search")
-                        .addHeader(new BasicHeader("Authorization", "Basic " + correctBasic))
-                        .execute()
+                Executor.newInstance(HttpClients.custom().disableCookieManagement().build())
+                        .auth("example_user_with_pass_hashcode_vulnerability", "Wikohy8b")
+                        .execute(Request.Get(httpDomain + "/_search"))
                         .returnResponse()
                         .getStatusLine()
                         .getStatusCode();
@@ -164,18 +166,62 @@ public class HttpBasicAuthenticationTest {
         assumeThat(statusCode, equalTo(HttpStatus.SC_OK));
 
         int hackerStatus =
-                Request.Get(httpDomain + "/_search")
-                        .addHeader(new BasicHeader("Authorization", "Basic " + hackerBasic))
-                        .execute()
+                Executor.newInstance(HttpClients.custom().disableCookieManagement().build())
+                        .auth("example_user_with_pass_hashcode_vulnerability", "aaaqscnch")
+                        .execute(Request.Get(httpDomain + "/_search"))
                         .returnResponse()
                         .getStatusLine()
                         .getStatusCode();
 
         assertThat("Authentication can be cached on backend logic. If as part of cache key use password hashCode, hacker can easy " +
-                "brute force password because java hashcode cryptographic strength 2^32. " +
-                "It means that even if user password hashed with 64-bit(2^64) key " +
-                "in configuration hacker still can hack it by use password hashcode vulnerability",
+                        "brute force password because java hashcode cryptographic strength 2^32. " +
+                        "It means that even if user password hashed with 64-bit(2^64) key " +
+                        "in configuration hacker still can hack it by use password hashcode vulnerability",
                 hackerStatus, equalTo(HttpStatus.SC_UNAUTHORIZED)
+        );
+    }
+
+    @Test
+    public void authenticationSessionUse() throws Exception {
+        loadConfiguration("authentication/basic/minimal");
+
+        String correctBasic = Base64Helper.encodeBasicHeader("example_user_with_pass_hashcode_vulnerability", "Wikohy8b");
+        String incorrectBasic = Base64Helper.encodeBasicHeader("example_user_with_pass_hashcode_vulnerability", "notCorrectPassword");
+
+        RequestConfig globalConfig = RequestConfig.custom().setCookieSpec(CookieSpecs.BEST_MATCH).build();
+        CookieStore cookieStore = new BasicCookieStore();
+        HttpClientContext context = HttpClientContext.create();
+        context.setCookieStore(cookieStore);
+
+        CloseableHttpClient client =
+                HttpClients.custom()
+                        .setDefaultRequestConfig(globalConfig)
+                        .setDefaultCookieStore(cookieStore)
+                        .build();
+
+        HttpGet get = new HttpGet(httpDomain + "/_search");
+        get.setHeader("Authorization", "Basic " + correctBasic);
+
+
+        try (CloseableHttpResponse response = client.execute(get, context)) {
+            int code = response.getStatusLine().getStatusCode();
+
+            assumeThat(code, equalTo(HttpStatus.SC_OK));
+        }
+
+        get.setHeader("Authorization", "Basic " + incorrectBasic);
+
+        int code;
+        try (CloseableHttpResponse response = client.execute(get, context)) {
+            code = response.getStatusLine().getStatusCode();
+            client.close();
+        }
+
+        client.close();
+        assertThat("After success authentication search guard assign authentication token to client that allow " +
+                        "skip authentication by each request, in that test we test that cookie with token use correct " +
+                        "for authentication",
+                code, equalTo(HttpStatus.SC_OK)
         );
     }
 
@@ -224,11 +270,8 @@ public class HttpBasicAuthenticationTest {
             updatedConfigs.add(cfgName);
         }
 
-        ConfigUpdateResponse response =
-                client.execute(
-                        ConfigUpdateAction.INSTANCE,
-                        new ConfigUpdateRequest(updatedConfigs.toArray(new String[updatedConfigs.size()])))
-                        .get();
+        ConfigUpdateRequest updateRequest = new ConfigUpdateRequest(updatedConfigs.toArray(new String[updatedConfigs.size()]));
+        client.execute(ConfigUpdateAction.INSTANCE, updateRequest).get();
     }
 
     public Client getAdminClient() {
@@ -252,7 +295,7 @@ public class HttpBasicAuthenticationTest {
 
         List<TransportAddress> addresses = server.getNodeAddresses();
 
-        client.addTransportAddresses(addresses.toArray(new TransportAddress[0]));
+        client.addTransportAddresses(addresses.toArray(new TransportAddress[addresses.size()]));
 
         return client;
     }

@@ -19,28 +19,22 @@ package com.floragunn.searchguard.auth;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.SortedSet;
-import java.util.TreeSet;
+import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.naming.InvalidNameException;
 import javax.naming.ldap.LdapName;
 
 import com.floragunn.searchguard.configuration.ConfigurationChangeListener;
+import com.floragunn.searchguard.rest.ExtendedRestChannel;
 import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.common.logging.ESLogger;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.rest.BytesRestResponse;
-import org.elasticsearch.rest.RestChannel;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.transport.TransportChannel;
@@ -66,9 +60,16 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
+import org.jboss.netty.handler.codec.http.HttpHeaders;
+import org.jboss.netty.handler.codec.http.cookie.Cookie;
+import org.jboss.netty.handler.codec.http.cookie.DefaultCookie;
+import org.jboss.netty.handler.codec.http.cookie.ServerCookieDecoder;
+import org.jboss.netty.handler.codec.http.cookie.ServerCookieEncoder;
 
 public class BackendRegistry implements ConfigurationChangeListener {
     public static final String CONFIGURATION_NAME = "config";
+
+    private static final String CACHE_AUTH_TOKEN = "_sg_auth_token";
 
     protected final ESLogger log = Loggers.getLogger(this.getClass());
     private final Map<String, String> authImplMap = new HashMap<String, String>();
@@ -83,11 +84,11 @@ public class BackendRegistry implements ConfigurationChangeListener {
     private final InternalAuthenticationBackend iab;
     private final AuditLog auditLog;
 
-    private Cache<AuthCredentials, User> userCache = CacheBuilder.newBuilder()
+    private Cache<AuthSession, User> userCache = CacheBuilder.newBuilder()
             .expireAfterWrite(1, TimeUnit.HOURS)
-            .removalListener(new RemovalListener<AuthCredentials, User>() {
+            .removalListener(new RemovalListener<AuthSession, User>() {
                 @Override
-                public void onRemoval(RemovalNotification<AuthCredentials, User> notification) {
+                public void onRemoval(RemovalNotification<AuthSession, User> notification) {
                     log.debug("Clear user cache for {} due to {}", notification.getKey().getUsername(), notification.getCause());
                 }
             }).build();
@@ -299,7 +300,7 @@ public class BackendRegistry implements ConfigurationChangeListener {
      * @return The authenticated user, null means another roundtrip
      * @throws ElasticsearchSecurityException
      */
-    public boolean authenticate(final RestRequest request, final RestChannel channel) throws ElasticsearchSecurityException {
+    public boolean authenticate(final RestRequest request, final ExtendedRestChannel channel) throws ElasticsearchSecurityException {
 
         if(log.isTraceEnabled()) {
             log.trace(LogHelper.toString(request));
@@ -316,7 +317,7 @@ public class BackendRegistry implements ConfigurationChangeListener {
             channel.sendResponse(new BytesRestResponse(RestStatus.SERVICE_UNAVAILABLE, "Search Guard not initialized (SG11)"));
             return false;
         }
-        
+
         request.putInContext(ConfigConstants.SG_REMOTE_ADDRESS, xffResolver.resolve(request));
         
         boolean authenticated = false;
@@ -336,7 +337,7 @@ public class BackendRegistry implements ConfigurationChangeListener {
             if(httpAuthenticator == null) {
                 continue; //this domain is for transport protocol only
             }
-            
+
             if(authDomain.isChallenge() && firstChallengingHttpAuthenticator == null) {
                 firstChallengingHttpAuthenticator = httpAuthenticator;
             }
@@ -383,63 +384,14 @@ public class BackendRegistry implements ConfigurationChangeListener {
             } 
             ////credentials found in request and they are complete
 
-            if(log.isDebugEnabled()) {
-                log.debug("User '{}' is in cache? {} (cache size: {})", ac.getUsername(), userCache.getIfPresent(ac)!=null, userCache.size());
-            }
-            
-            try {
-                try {
-                    authenticatedUser = userCache.get(ac, new Callable<User>() {
-                        @Override
-                        public User call() throws Exception {
-                            if(log.isDebugEnabled()) {
-                                log.debug(ac.getUsername()+" not cached, return from "+authDomain.getBackend().getType()+" backend directly");
-                            }
-                            User authenticatedUser = authDomain.getBackend().authenticate(ac);
-                            for (final AuthorizationBackend ab : authorizers) {
-                                
-                                //TODO transform username
-                                
-                                try {
-                                    ab.fillRoles(authenticatedUser, new AuthCredentials(authenticatedUser.getName()));
-                                } catch (Exception e) {
-                                    log.error("Problems retrieving roles for {} from {}", authenticatedUser, ab.getClass());
-                                }
-                            }
-                            //authDomain.getAbackend().fillRoles(authenticatedUser, new AuthCredentials(authenticatedUser.getName(), (Object) null));
-                            return authenticatedUser;
-                        }
-                    });
-                } catch (Exception e) {
-                    log.error("Unexpected exception {} ", e, e.toString());
-                    throw new ElasticsearchSecurityException(e.toString(), e);
-                } finally {
-                    ac.clearSecrets();
-                }
-                
-                if(authenticatedUser == null) {
-                    log.info("Cannot authenticate user (or add roles) with ad {} due to user is null, try next", authDomain.getOrder());
-                    continue;
-                }
-                
-                if(adminDns.isAdmin(authenticatedUser.getName())) {
-                    log.error("Cannot authenticate user because admin user is not permitted to login via HTTP");
-                    channel.sendResponse(new BytesRestResponse(RestStatus.FORBIDDEN));
-                    return false;
-                }
-                
-                 //authenticatedUser.addRoles(ac.getBackendRoles());
-                if(log.isDebugEnabled()) {
-                    log.debug("User '{}' is authenticated", authenticatedUser);
-                }
+            AuthSession authSession = readSession(ac, request);
+
+            authenticatedUser = cachedBackendAuthentication(authSession, ac, authDomain, channel);
+            if(authenticatedUser != null) {
                 request.putInContext(ConfigConstants.SG_USER, authenticatedUser);
                 authenticated = true;
                 break;
-            } catch (final ElasticsearchSecurityException e) {
-                log.info("Cannot authenticate user (or add roles) with ad {} due to {}, try next", authDomain.getOrder(), e.toString());
-                continue;
             }
-            
         }//end for
         
         if(!authenticated) {
@@ -448,7 +400,7 @@ public class BackendRegistry implements ConfigurationChangeListener {
             //}
             //no reRequest possible
             
-            if(authCredenetials == null && anonymousAuthEnabled) {
+            if (authCredenetials == null && anonymousAuthEnabled) {
                 request.putInContext(ConfigConstants.SG_USER, User.ANONYMOUS);
                 if(log.isDebugEnabled()) {
                     log.debug("Anonymous User is authenticated");
@@ -456,13 +408,13 @@ public class BackendRegistry implements ConfigurationChangeListener {
                 return true;
             }
             
-            if(firstChallengingHttpAuthenticator != null) {
+            if (firstChallengingHttpAuthenticator != null) {
                 if(firstChallengingHttpAuthenticator.reRequestAuthentication(channel, null)) {
                     return false;
                 }
             }
             
-            if(log.isDebugEnabled()) {
+            if (log.isDebugEnabled()) {
                 log.debug("Authentication finally failed");
             }
             auditLog.logFailedLogin(authCredenetials == null ? null:authCredenetials.getUsername(), request);
@@ -471,6 +423,109 @@ public class BackendRegistry implements ConfigurationChangeListener {
         }
         
         return authenticated;
+    }
+
+    private AuthSession readSession(AuthCredentials credentials, RestRequest request) {
+        String cookie = request.header(HttpHeaders.Names.COOKIE);
+        if (Strings.isNullOrEmpty(cookie)) {
+            return null;
+        }
+
+        Set<Cookie> decodedCookies = ServerCookieDecoder.LAX.decode(cookie);
+
+        for (Cookie checkCookie : decodedCookies) {
+            if (CACHE_AUTH_TOKEN.equals(checkCookie.name())) {
+                String uuidStr = checkCookie.value();
+                if(Strings.isNullOrEmpty(uuidStr)) {
+                    continue;
+                }
+                UUID uuid = UUID.fromString(uuidStr);
+                return new AuthSession(credentials.getUsername(), uuid);
+            }
+        }
+
+        return null;
+    }
+
+    private AuthSession createSession(@Nonnull AuthCredentials credentials) {
+        return new AuthSession(credentials.getUsername(), UUID.randomUUID());
+    }
+
+    private void addAuthSessionToHeader(@Nonnull AuthSession authSession, @Nonnull ExtendedRestChannel channel) {
+        DefaultCookie cookie = new DefaultCookie(CACHE_AUTH_TOKEN, authSession.getSessionToken().toString());
+        cookie.setMaxAge((int) TimeUnit.HOURS.toSeconds(1L));
+        channel.addHeaderToResponse(HttpHeaders.Names.SET_COOKIE, ServerCookieEncoder.STRICT.encode(cookie));
+    }
+
+
+    @Nullable
+    private User cachedBackendAuthentication(@Nullable AuthSession authSession, @Nonnull AuthCredentials ac, @Nonnull AuthDomain authDomain, @Nonnull ExtendedRestChannel channel) {
+        User authenticatedUser = null;
+        if(log.isDebugEnabled()) {
+            log.debug("User '{}' is in cache? {} (cache size: {})", ac.getUsername(), userCache.getIfPresent(ac)!=null, userCache.size());
+        }
+
+        try {
+            try {
+                User cachedUser = null;
+                if (authSession != null) {
+                    cachedUser = userCache.getIfPresent(authSession);
+                }
+
+                if(cachedUser != null) {
+                    authenticatedUser = cachedUser;
+                } else {
+                    if(log.isDebugEnabled()) {
+                        log.debug(ac.getUsername()+" ("+ac.hashCode()+") not cached, return from "+authDomain.getBackend().getType()+" backend directly");
+                    }
+                    authenticatedUser = backendAuthentication(ac, authDomain);
+                    AuthSession newAuthSession = createSession(ac);
+                    userCache.put(newAuthSession, authenticatedUser);
+                    addAuthSessionToHeader(newAuthSession, channel);
+                }
+            } catch (Exception e) {
+                log.error("Unexpected exception {} ", e, e.toString());
+                throw new ElasticsearchSecurityException(e.toString(), e);
+            } finally {
+                ac.clearSecrets();
+            }
+
+            if(adminDns.isAdmin(authenticatedUser.getName())) {
+                log.error("Cannot authenticate user because admin user is not permitted to login via HTTP");
+                channel.sendResponse(new BytesRestResponse(RestStatus.FORBIDDEN));
+                return null;
+            }
+
+            if(log.isDebugEnabled()) {
+                log.debug("User '{}' is authenticated", authenticatedUser);
+            }
+
+        } catch (final ElasticsearchSecurityException e) {
+            log.info("Cannot authenticate user (or add roles) with ad {} due to {}, try next", authDomain.getOrder(), e.toString());
+        }
+
+        return authenticatedUser;
+    }
+
+    //todo ask all backends about support cred type
+    @Nonnull
+    private User backendAuthentication(AuthCredentials ac, AuthDomain authDomain) {
+        if(log.isDebugEnabled()) {
+            log.debug(ac.getUsername()+" ("+ac.hashCode()+") not cached, return from "+authDomain.getBackend().getType()+" backend directly");
+        }
+        User authenticatedUser = authDomain.getBackend().authenticate(ac);
+        for (final AuthorizationBackend ab : authorizers) {
+
+            //TODO transform username
+
+            try {
+                ab.fillRoles(authenticatedUser, new AuthCredentials(authenticatedUser.getName()));
+            } catch (Exception e) {
+                log.error("Problems retrieving roles for {} from {}", authenticatedUser, ab.getClass());
+            }
+        }
+
+        return authenticatedUser;
     }
 
     private boolean isInitialized() {

@@ -17,6 +17,7 @@
 
 package com.floragunn.searchguard.filter;
 
+import com.floragunn.searchguard.rest.ExtendedRestChannel;
 import org.elasticsearch.rest.BytesRestResponse;
 import org.elasticsearch.rest.RestChannel;
 import org.elasticsearch.rest.RestFilter;
@@ -50,19 +51,14 @@ public class AuthenticationRestFilter extends RestFilter {
             channel.sendResponse(new BytesRestResponse(channel, RestStatus.FORBIDDEN, e));
             return;
         }
+
+        ExtendedRestChannel extendedRestChannel = new ExtendedRestChannel(channel);
         
-        if(request.method() != Method.OPTIONS) {
-            
-            if (!registry.authenticate(request, channel)) {
-                // another roundtrip
-                return;
-            }
-            
+        if(request.method() != Method.OPTIONS && !registry.authenticate(request, extendedRestChannel)) {
+            return;
         }
-        
-        
-        
-        filterChain.continueProcessing(request, channel);
+
+        filterChain.continueProcessing(request, extendedRestChannel);
     }
 
 }
