@@ -17,6 +17,7 @@
 
 package com.floragunn.searchguard;
 
+import com.floragunn.searchguard.utils.ResourceUtils;
 import io.netty.handler.ssl.OpenSsl;
 
 import java.io.File;
@@ -116,6 +117,8 @@ public abstract class AbstractUnitTest {
     protected boolean trustHTTPServerCertificate = false;
     protected String keystore = "node-0-keystore.jks";
 
+    private final ResourceUtils resourceUtils = new ResourceUtils(this.getClass());
+
     @Rule
     public final TestWatcher testWatcher = new TestWatcher() {
         @Override
@@ -169,7 +172,7 @@ public abstract class AbstractUnitTest {
     }
     // @formatter:on
 
-    protected final ESLogger log = Loggers.getLogger(this.getClass());
+    protected static final ESLogger log = Loggers.getLogger(AbstractUnitTest.class);
 
     protected final String getHttpServerUri() {
         final String address = "http" + (enableHTTPClientSSL ? "s" : "") + "://" + httpHost + ":" + httpPort;
@@ -264,25 +267,7 @@ public abstract class AbstractUnitTest {
     }
 
     public File getAbsoluteFilePathFromClassPath(final String fileNameFromClasspath) {
-        File file = null;
-        final URL fileUrl = AbstractUnitTest.class.getClassLoader().getResource(fileNameFromClasspath);
-        if (fileUrl != null) {
-            try {
-                file = new File(URLDecoder.decode(fileUrl.getFile(), "UTF-8"));
-            } catch (final UnsupportedEncodingException e) {
-                return null;
-            }
-
-            if (file.exists() && file.canRead()) {
-                return file;
-            } else {
-                log.error("Cannot read from {}, maybe the file does not exists? ", file.getAbsolutePath());
-            }
-
-        } else {
-            log.error("Failed to load " + fileNameFromClasspath);
-        }
-        return null;
+        return resourceUtils.getAbsoluteFilePathFromClassPath(fileNameFromClasspath);
     }
 
     protected String executeSimpleRequest(final String request) throws Exception {
@@ -447,34 +432,9 @@ public abstract class AbstractUnitTest {
 
         return hcb.build();
     }
-    
-    protected final String loadFile(final String file) throws IOException {
-        final StringWriter sw = new StringWriter();
-        IOUtils.copy(this.getClass().getResourceAsStream("/" + file), sw, StandardCharsets.UTF_8);
-        return sw.toString();
-    }
-    
+
     protected BytesReference readYamlContent(final String file) {
-            try {
-                return readXContent(new StringReader(loadFile(file)), XContentType.YAML);
-            } catch (IOException e) {
-                return null;
-            }
-    }
-    
-    protected BytesReference readXContent(final Reader reader, final XContentType xContentType) throws IOException {
-        XContentParser parser = null;
-        try {
-            parser = XContentFactory.xContent(xContentType).createParser(reader);
-            parser.nextToken();
-            final XContentBuilder builder = XContentFactory.jsonBuilder();
-            builder.copyCurrentStructure(parser);
-            return builder.bytes();
-        } finally {
-            if (parser != null) {
-                parser.close();
-            }
-        }
+        return resourceUtils.readYamlContent(file);
     }
     
     public static String encodeBasicHeader(final String username, final String password) {
