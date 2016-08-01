@@ -6,7 +6,6 @@ import com.floragunn.searchguard.action.configupdate.ConfigUpdateRequest;
 import com.floragunn.searchguard.configuration.IndexBaseConfigurationRepository;
 import com.floragunn.searchguard.ssl.SearchGuardSSLPlugin;
 import com.floragunn.searchguard.ssl.util.SSLConfigConstants;
-import com.floragunn.searchguard.support.Base64Helper;
 import com.floragunn.searchguard.utils.EmbeddedServer;
 import com.floragunn.searchguard.utils.ResourceUtils;
 import com.google.common.collect.Iterables;
@@ -35,9 +34,12 @@ import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import javax.xml.bind.DatatypeConverter;
 import java.io.File;
 import java.io.FileReader;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -103,7 +105,7 @@ public class HttpBasicAuthenticationTest {
 
         int statusCode =
                 Request.Get(httpDomain + "/_search")
-                        .addHeader(new BasicHeader("Authorization", "Basic " + Base64Helper.encodeBasicHeader("test_user", "notValidPassword")))
+                        .addHeader(new BasicHeader("Authorization", "Basic " + encodeBasicHeader("test_user", "notValidPassword")))
                         .execute()
                         .returnResponse()
                         .getStatusLine()
@@ -122,7 +124,7 @@ public class HttpBasicAuthenticationTest {
 
         int statusCode =
                 Request.Get(httpDomain + "/_search")
-                        .addHeader(new BasicHeader("Authorization", "Basic " + Base64Helper.encodeBasicHeader("notExistsUser", "notValidPassword")))
+                        .addHeader(new BasicHeader("Authorization", "Basic " + encodeBasicHeader("notExistsUser", "notValidPassword")))
                         .execute()
                         .returnResponse()
                         .getStatusLine()
@@ -140,7 +142,7 @@ public class HttpBasicAuthenticationTest {
 
         int statusCode =
                 Request.Get(httpDomain + "/_search")
-                        .addHeader(new BasicHeader("Authorization", "Basic " + Base64Helper.encodeBasicHeader("test_user", "spock")))
+                        .addHeader(new BasicHeader("Authorization", "Basic " + encodeBasicHeader("test_user", "spock")))
                         .execute()
                         .returnResponse()
                         .getStatusLine()
@@ -185,8 +187,8 @@ public class HttpBasicAuthenticationTest {
     public void authenticationSessionUse() throws Exception {
         loadConfiguration("authentication/basic/minimal");
 
-        String correctBasic = Base64Helper.encodeBasicHeader("example_user_with_pass_hashcode_vulnerability", "Wikohy8b");
-        String incorrectBasic = Base64Helper.encodeBasicHeader("example_user_with_pass_hashcode_vulnerability", "notCorrectPassword");
+        String correctBasic = encodeBasicHeader("example_user_with_pass_hashcode_vulnerability", "Wikohy8b");
+        String incorrectBasic = encodeBasicHeader("example_user_with_pass_hashcode_vulnerability", "notCorrectPassword");
 
         RequestConfig globalConfig = RequestConfig.custom().setCookieSpec(CookieSpecs.BEST_MATCH).build();
         CookieStore cookieStore = new BasicCookieStore();
@@ -223,6 +225,10 @@ public class HttpBasicAuthenticationTest {
                         "for authentication",
                 code, equalTo(HttpStatus.SC_OK)
         );
+    }
+
+    private String encodeBasicHeader(final String username, final String password) {
+        return new String(DatatypeConverter.printBase64Binary((username + ":" + Objects.requireNonNull(password)).getBytes(StandardCharsets.UTF_8)));
     }
 
     public void loadConfiguration(String configFolder) throws Exception {
